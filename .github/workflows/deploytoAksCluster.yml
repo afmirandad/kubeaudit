@@ -1,0 +1,50 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    
+    - uses: azure/docker-login@v1
+      with:
+        login-server: testbcpacr.azurecr.io
+        username: ${{ secrets.acr_testbcpacr_username }}
+        password: ${{ secrets.acr_testbcpacr_password }}
+    
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/" -f  "Dockerfile" -t testbcpacr.azurecr.io/eksbcp:${{ github.sha }}
+        docker push testbcpacr.azurecr.io/eksbcp:${{ github.sha }}
+    
+    - uses: azure/k8s-set-context@v1
+      with:
+         kubeconfig: ${{ secrets.aks_eksbcp_kubeConfig }}
+      id: login
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep eksbcp697b | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace eksbcp697b`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: eksbcp697b
+        container-registry-url: testbcpacr.azurecr.io
+        container-registry-username: ${{ secrets.acr_testbcpacr_username }}
+        container-registry-password: ${{ secrets.acr_testbcpacr_password }}
+        secret-name: eksbcpdockerauth
+       
+    - uses: azure/k8s-deploy@v1
+      with:
+        namespace: eksbcp697b
+        manifests: |
+          manifests/deployment.yml
+          manifests/service.yml
+        images: |
+          testbcpacr.azurecr.io/eksbcp:${{ github.sha }}
+        imagepullsecrets: |
+          eksbcpdockerauth
